@@ -1,0 +1,15 @@
+# Ultralytics ByteTrack tracker settings
+
+tracker_type: bytetrack
+
+# Tracking thresholds
+track_high_thresh: 0.5  # High confidence detection threshold
+track_low_thresh: 0.1   # Low confidence detection threshold
+new_track_thresh: 0.6   # Threshold for creating a new track from a high-confidence detection
+
+# Track lifecycle
+track_buffer: 300       # Number of frames to buffer a lost track. Increased for better occlusion handling.
+match_thresh: 0.8       # IOU threshold for matching tracks with detections
+
+# Advanced
+fuse_score: false      # Whether to fuse detection score with IOU similarity

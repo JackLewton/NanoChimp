@@ -1,0 +1,23 @@
+# Ultralytics BoT-SORT tracker settings
+# BoT-SORT: Robust Associations Multi-Pedestrian Tracking
+# Combines motion (Kalman filter) with appearance features (Re-ID)
+
+tracker_type: botsort
+
+# Detection thresholds
+track_high_thresh: 0.5      # High confidence detection threshold
+track_low_thresh: 0.1       # Low confidence detection threshold
+new_track_thresh: 0.6       # Threshold for creating a new track
+
+# Track lifecycle
+track_buffer: 300           # Number of frames to keep lost tracks (matches ByteTrack)
+match_thresh: 0.8           # IOU threshold for matching
+
+# BoT-SORT specific parameters
+fuse_score: true            # Fuse confidence score with IOU for association
+gmc_method: sparseOptFlow   # Global motion compensation method: sparseOptFlow, orb, ecc
+proximity_thresh: 0.5       # Spatial proximity threshold for ReID
+appearance_thresh: 0.25     # Appearance similarity threshold for ReID
+with_reid: true             # Enable Re-ID features
+model: auto                 # Re-ID model: "auto" downloads default, or path to custom model
+
