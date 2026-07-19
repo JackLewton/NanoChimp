@@ -1,9 +1,14 @@
 # NanoChimp: lightweight detection, tracking and reid of chimpanzees
 
+# Introduction
+
+This repos contains a framework for detecting, tracking and identifying zoo animals. Below are some guidance on how to teach AI models to recognise and track your own zoo animals. I trained my model on chimpanzees, hence why a lot of this project is named that way.
+
 ## Requirements
 
 - Python 3.8+
 - CUDA GPU recommended
+- Videos of the animals you wish to monitor
 
 ## Clone repos and create conda env
 
@@ -96,7 +101,7 @@ python configs/inference.py --use_tracking --use_reid --input_dir infer_input --
 ## Evaluation
 
 ```bash
-python tools/evaluate_models.py        # detection metrics
+python tools/evaluate_det_model.py     # detection metrics - evaluate_det_model_extra for more detailed eval
 python tools/evaluate_reid_model.py    # Re-ID metrics
 python tools/evaluate_tracking.py      # tracking metrics (MOT ground truth required*)
 ```

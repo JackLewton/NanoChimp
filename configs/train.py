@@ -32,6 +32,9 @@ def convert_coco_to_yolo_format(annotation_file, image_dir, output_dir, single_c
         single_class: Whether to use single class (merge occluded/non-occluded)
         use_nighttime_aug: Whether to apply nighttime augmentation (default: False)
         nighttime_aug_prob: Probability of applying nighttime augmentation (default: 0.5 for 50%)
+
+    A custom function is used as originally I had two classes (occluded/non-occluded)
+    to help with evalutation, plus I needed to augment the images for the nighttime option.
     """
     with open(annotation_file, 'r') as f:
         data = json.load(f)

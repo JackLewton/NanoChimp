@@ -20,3 +20,6 @@ reid_training/
 __pycache__/
 *.pyc
 *:Zone.Identifier
+tmp/
+*ipynb
+yolo_benchmark_dataset/

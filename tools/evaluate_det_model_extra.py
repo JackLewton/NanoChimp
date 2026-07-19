@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Evaluate a YOLO detection model and report metrics suitable for publication.
+Evaluate a YOLO detection model.
 
 mAP50 and mAP50:95 are computed via the official Ultralytics validation engine.
-Precision, recall, and F1 are computed with scikit-learn after greedy IoU-based
-matching of predictions to ground truth boxes.
+Precision, recall, and F1 are computed with scikit-learn.
 """
 
 import os
