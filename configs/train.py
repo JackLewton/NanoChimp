@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import nighttime augmentation and split dataset tools
 from tools.nighttime_augmentation import RandomNighttimeAugmentation
-from tools.split_dataset import create_train_val_split
+from tools.split_dataset_date_disjoint import create_date_disjoint_split
 
 
 def convert_coco_to_yolo_format(annotation_file, image_dir, output_dir, single_class: bool = False, use_nighttime_aug=False, nighttime_aug_prob=0.5):
@@ -161,10 +161,12 @@ def create_yolo_config(output_dir, num_classes=2, single_class: bool = False):
     output_dir_abs = os.path.abspath(output_dir)
     train_list = os.path.join(output_dir_abs, 'train.txt')
     val_list = os.path.join(output_dir_abs, 'val.txt')
+    test_list = os.path.join(output_dir_abs, 'test.txt')
 
     # When using text list files, reference them relative to `path`
     train_ref = os.path.basename(train_list) if os.path.isfile(train_list) else 'images'
     val_ref = os.path.basename(val_list) if os.path.isfile(val_list) else 'images'
+    test_ref = os.path.basename(test_list) if os.path.isfile(test_list) else None
 
     names = {0: 'chimp'} if single_class or num_classes == 1 else {0: 'chimp', 1: 'occluded_chimp'}
     nc_value = 1 if single_class else num_classes
@@ -177,6 +179,8 @@ def create_yolo_config(output_dir, num_classes=2, single_class: bool = False):
         'names': names,
         'nc': nc_value
     }
+    if test_ref:
+        config['test'] = test_ref
     
     config_path = os.path.join(output_dir_abs, 'data.yaml')
     with open(config_path, 'w') as f:
@@ -405,14 +409,16 @@ def main():
         nighttime_aug_prob=args.nighttime_aug_prob
     )
     
-    # Optionally create train/val splits
     try:
-        print('Creating train/val split lists...')
-        create_train_val_split(os.path.join(yolo_data_dir, 'images'), val_ratio=0.2, seed=42, output_dir=yolo_data_dir)
+        print('Creating date-disjoint train/val/test split lists...')
+        create_date_disjoint_split(
+            os.path.join(yolo_data_dir, 'images'),
+            output_dir=yolo_data_dir,
+            write_yaml=False,
+        )
     except Exception as e:
         print(f"Skipping split creation due to error: {e}")
-        # If split fails, remove stale split files to force Ultralytics to scan the directory
-        for fname in ("train.txt", "val.txt"):
+        for fname in ("train.txt", "val.txt", "test.txt"):
             stale_file = os.path.join(yolo_data_dir, fname)
             if os.path.exists(stale_file):
                 print(f"Removing stale split file: {stale_file}")
