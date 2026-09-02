@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import nighttime augmentation and split dataset tools
 from tools.nighttime_augmentation import RandomNighttimeAugmentation
-from tools.split_dataset_date_disjoint import create_date_disjoint_split
+from tools.split_dataset_with_test import create_train_val_test_split
 
 
 def convert_coco_to_yolo_format(annotation_file, image_dir, output_dir, single_class: bool = False, use_nighttime_aug=False, nighttime_aug_prob=0.5):
@@ -410,11 +410,10 @@ def main():
     )
     
     try:
-        print('Creating date-disjoint train/val/test split lists...')
-        create_date_disjoint_split(
+        print('Creating video-disjoint train/val/test split lists...')
+        create_train_val_test_split(
             os.path.join(yolo_data_dir, 'images'),
             output_dir=yolo_data_dir,
-            write_yaml=False,
         )
     except Exception as e:
         print(f"Skipping split creation due to error: {e}")
