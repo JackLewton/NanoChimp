@@ -4,7 +4,7 @@ from ultralytics import YOLO
 model = YOLO('runs/detect/yolo_training/gpu_bounding_box_model6/weights/best.pt')
 
 # 2. eval (default set to val split)
-metrics = model.val(data = "yolo_dataset/data.yaml")
+metrics = model.val(data = "yolo_dataset/data.yaml", split="test")
 
 # 3. print eval metrics
 print(f"mAP50: {metrics.results_dict['metrics/mAP50(B)']:.4f}")
