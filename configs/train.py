@@ -313,7 +313,15 @@ def train_yolo_model(
     train_kwargs.update(aug_params)
     
     results = model.train(**train_kwargs)
-    
+
+    trainer = getattr(model, "trainer", None)
+    stopper = getattr(trainer, "stopper", None) if trainer is not None else None
+    if stopper is not None and getattr(stopper, "best_epoch", None):
+        print(
+            f"Best epoch: {stopper.best_epoch}/{trainer.epoch + 1} "
+            f"(val fitness={stopper.best_fitness:.4f}) → {trainer.best}"
+        )
+
     return model, results
 
 
@@ -446,21 +454,27 @@ def main():
                 parser.error(f'--fold must be between 1 and {len(fold_dirs)}')
             fold_dirs = [fold_dirs[args.fold - 1]]
 
+        print(f"Training {len(fold_dirs)} fold(s) sequentially...")
         for fold_dir in fold_dirs:
             fold_name = os.path.basename(fold_dir)
+            fold_num = fold_name.rsplit("_", 1)[-1]
+            print()
+            print("=" * 72)
+            print(f"Fold {fold_num}/{args.n_folds}")
+            print("=" * 72)
             config_path = create_yolo_config(
                 fold_dir, num_classes=2, single_class=args.single_class
             )
-            print(f"Training YOLO model on {fold_name} using {args.model}...")
             model, results = train_yolo_model(
                 data_yaml_path=config_path,
                 run_name=f'bounding_box_model_{fold_name}',
                 exist_ok=True,
                 **train_kwargs,
             )
-            print(f"{fold_name} saved in: {model.ckpt_path}")
+            print(f"Finished fold {fold_num}/{args.n_folds}: {model.ckpt_path}")
 
-        print("Training completed!")
+        print()
+        print("All requested folds completed.")
         return
 
     try:
