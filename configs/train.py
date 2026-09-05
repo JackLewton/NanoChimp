@@ -19,6 +19,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Import nighttime augmentation and split dataset tools
 from tools.nighttime_augmentation import RandomNighttimeAugmentation
 from tools.split_dataset import create_train_val_split
+from tools.split_dataset_kfold import create_kfold_splits
 
 
 def convert_coco_to_yolo_format(annotation_file, image_dir, output_dir, single_class: bool = False, use_nighttime_aug=False, nighttime_aug_prob=0.5):
@@ -199,6 +200,8 @@ def train_yolo_model(
     resume_from=None,
     aug_level='default',
     patience: int = 10,
+    run_name='bounding_box_model',
+    exist_ok=False,
 ):
     """
     Train YOLO model using ultralytics
@@ -212,6 +215,8 @@ def train_yolo_model(
         resume_from: Path to checkpoint to resume from
         aug_level: Augmentation level - 'default', 'moderate', or 'aggressive'
         patience: Early stopping patience
+        run_name: Ultralytics run directory name under yolo_training/
+        exist_ok: Overwrite an existing run directory with the same name
     """
     model_source = resume_from if resume_from else model_name
 
@@ -296,7 +301,8 @@ def train_yolo_model(
         'batch': batch_size,
         'device': device,
         'project': 'yolo_training',
-        'name': 'bounding_box_model',
+        'name': run_name,
+        'exist_ok': exist_ok,
         'save': True,
         'plots': True,
         'patience': patience,  # Early stopping patience (epochs with no improvement)
@@ -384,6 +390,12 @@ def main():
                         help='Enable nighttime augmentation: 50% of images will be augmented to simulate IR/nighttime conditions')
     parser.add_argument('--nighttime_aug_prob', type=float, default=0.5,
                         help='Probability of applying nighttime augmentation (default: 0.5 for 50%)')
+    parser.add_argument('--kfold', action='store_true',
+                        help='Use video-grouped 5-fold train/val/test (trains one model per fold)')
+    parser.add_argument('--n_folds', type=int, default=5,
+                        help='Number of folds when using --kfold (default: 5)')
+    parser.add_argument('--fold', type=int, default=None,
+                        help='If --kfold, train only this fold (1-indexed)')
     
     args = parser.parse_args()
     
@@ -409,10 +421,52 @@ def main():
         nighttime_aug_prob=args.nighttime_aug_prob
     )
     
+    images_dir = os.path.join(yolo_data_dir, 'images')
+    train_kwargs = dict(
+        model_name=args.model,
+        epochs=args.epochs,
+        imgsz=args.imgsz,
+        batch_size=args.batch_size,
+        resume_from=args.resume_from,
+        aug_level=args.aug_level,
+        patience=args.patience,
+    )
+
+    if args.kfold:
+        print('Creating video-grouped k-fold splits...')
+        fold_dirs = create_kfold_splits(
+            images_dir,
+            n_splits=args.n_folds,
+            val_ratio=0.15,
+            seed=42,
+            output_dir=os.path.join(yolo_data_dir, 'folds'),
+        )
+        if args.fold is not None:
+            if args.fold < 1 or args.fold > len(fold_dirs):
+                parser.error(f'--fold must be between 1 and {len(fold_dirs)}')
+            fold_dirs = [fold_dirs[args.fold - 1]]
+
+        for fold_dir in fold_dirs:
+            fold_name = os.path.basename(fold_dir)
+            config_path = create_yolo_config(
+                fold_dir, num_classes=2, single_class=args.single_class
+            )
+            print(f"Training YOLO model on {fold_name} using {args.model}...")
+            model, results = train_yolo_model(
+                data_yaml_path=config_path,
+                run_name=f'bounding_box_model_{fold_name}',
+                exist_ok=True,
+                **train_kwargs,
+            )
+            print(f"{fold_name} saved in: {model.ckpt_path}")
+
+        print("Training completed!")
+        return
+
     try:
         print('Creating train/val split lists...')
         create_train_val_split(
-            os.path.join(yolo_data_dir, 'images'),
+            images_dir,
             val_ratio=0.2,
             seed=42,
             output_dir=yolo_data_dir,
@@ -428,30 +482,17 @@ def main():
                 print(f"Removing stale split file: {stale_file}")
                 os.remove(stale_file)
 
-    # Create YOLO configuration (will reference split files if present)
     config_path = create_yolo_config(yolo_data_dir, num_classes=2, single_class=args.single_class)
-    
-    # Train YOLO model
+
     print(f"Training YOLO model using {args.model}...")
-    model, results = train_yolo_model(
-        data_yaml_path=config_path,
-        model_name=args.model,
-        epochs=args.epochs,
-        imgsz=args.imgsz,
-        batch_size=args.batch_size,
-        resume_from=args.resume_from,
-        aug_level=args.aug_level,
-        patience=args.patience,
-    )
-    
+    model, results = train_yolo_model(data_yaml_path=config_path, **train_kwargs)
+
     print("Training completed!")
     print(f"Model saved in: {model.ckpt_path}")
-    
-    # Visualize predictions
+
     print("Generating prediction visualizations...")
-    visualize_predictions_yolo(model, os.path.join(yolo_data_dir, 'images'), num_samples=5)
-    
-    # Save the best model with a more descriptive name
+    visualize_predictions_yolo(model, images_dir, num_samples=5)
+
     model_name_suffix = Path(args.annotation_file).stem.replace("_annotations", "").replace("_cleaned", "")
     best_model_path = f"{Path(args.model).stem}_bounding_box_model_{model_name_suffix}.pt"
     shutil.copy2(model.ckpt_path, best_model_path)
