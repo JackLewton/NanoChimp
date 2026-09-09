@@ -6,6 +6,7 @@ Prints per-fold Ultralytics metrics and mean ± SD across folds.
 
 Usage:
     python tools/evaluate_det_model_kfold.py
+    python tools/evaluate_det_model_kfold.py --checkpoint last
     python tools/evaluate_det_model_kfold.py --runs \\
         bounding_box_model_fold_1_noaug_20260908_1959 \\
         bounding_box_model_fold_2_noaug_20260908_1959 \\
@@ -43,18 +44,18 @@ def _extract(results_dict: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
-def _as_best_pt(path: str) -> Optional[str]:
+def _as_checkpoint(path: str, checkpoint: str) -> Optional[str]:
     if os.path.isfile(path) and path.endswith(".pt"):
         return path
-    candidate = os.path.join(path, "weights", "best.pt")
+    candidate = os.path.join(path, "weights", f"{checkpoint}.pt")
     if os.path.isfile(candidate):
         return candidate
     return None
 
 
-def _resolve_run(weights_dir: str, run: str) -> str:
-    """Resolve a run folder name or path to weights/best.pt."""
-    direct = _as_best_pt(run)
+def _resolve_run(weights_dir: str, run: str, checkpoint: str = "best") -> str:
+    """Resolve a run folder name or path to weights/{best,last}.pt."""
+    direct = _as_checkpoint(run, checkpoint)
     if direct:
         return direct
     candidates = [
@@ -64,16 +65,16 @@ def _resolve_run(weights_dir: str, run: str) -> str:
         os.path.join("runs", "detect", weights_dir, run),
     ]
     for base in candidates:
-        found = _as_best_pt(base)
+        found = _as_checkpoint(base, checkpoint)
         if found:
             return found
     raise FileNotFoundError(
-        f"No best.pt for run '{run}'. Looked in:\n  " + "\n  ".join(candidates)
+        f"No {checkpoint}.pt for run '{run}'. Looked in:\n  " + "\n  ".join(candidates)
     )
 
 
-def _resolve_weights(weights_dir: str, fold: int) -> str:
-    return _resolve_run(weights_dir, f"bounding_box_model_fold_{fold}")
+def _resolve_weights(weights_dir: str, fold: int, checkpoint: str = "best") -> str:
+    return _resolve_run(weights_dir, f"bounding_box_model_fold_{fold}", checkpoint)
 
 
 def evaluate_fold(weights: str, data_yaml: str, split: str, imgsz: int) -> Dict[str, float]:
@@ -110,6 +111,12 @@ def main() -> None:
     parser.add_argument("--n_folds", type=int, default=5, help="Number of folds")
     parser.add_argument("--split", default="test", help="Ultralytics split to evaluate")
     parser.add_argument("--imgsz", type=int, default=640, help="Eval image size")
+    parser.add_argument(
+        "--checkpoint",
+        choices=("best", "last"),
+        default="best",
+        help="Weight file under each run's weights/ directory (default: best)",
+    )
     args = parser.parse_args()
 
     if args.n_folds != 5 and args.runs is not None:
@@ -121,9 +128,9 @@ def main() -> None:
     rows: List[Dict[str, float]] = []
     names = ["mAP50", "mAP50-95", "Precision", "Recall", "F1"]
 
-    print(f"Evaluating {n_folds} folds on split='{args.split}'\n")
+    print(f"Evaluating {n_folds} folds on split='{args.split}' checkpoint='{args.checkpoint}'\n")
     for fold, run in enumerate(run_names, start=1):
-        weights = _resolve_run(args.weights_dir, run)
+        weights = _resolve_run(args.weights_dir, run, args.checkpoint)
         data_yaml = os.path.join(args.data_dir, f"fold_{fold}", "data.yaml")
         if not os.path.isfile(data_yaml):
             raise FileNotFoundError(f"Missing {data_yaml}")
