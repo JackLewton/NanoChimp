@@ -6,13 +6,19 @@ Prints per-fold Ultralytics metrics and mean ± SD across folds.
 
 Usage:
     python tools/evaluate_det_model_kfold.py
+    python tools/evaluate_det_model_kfold.py --runs \\
+        bounding_box_model_fold_1_noaug_20260908_1959 \\
+        bounding_box_model_fold_2_noaug_20260908_1959 \\
+        bounding_box_model_fold_3_noaug_20260908_1959 \\
+        bounding_box_model_fold_4_noaug_20260908_1959 \\
+        bounding_box_model_fold_5_noaug_20260908_1959
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 from ultralytics import YOLO
@@ -37,21 +43,37 @@ def _extract(results_dict: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
-def _resolve_weights(weights_dir: str, fold: int) -> str:
+def _as_best_pt(path: str) -> Optional[str]:
+    if os.path.isfile(path) and path.endswith(".pt"):
+        return path
+    candidate = os.path.join(path, "weights", "best.pt")
+    if os.path.isfile(candidate):
+        return candidate
+    return None
+
+
+def _resolve_run(weights_dir: str, run: str) -> str:
+    """Resolve a run folder name or path to weights/best.pt."""
+    direct = _as_best_pt(run)
+    if direct:
+        return direct
     candidates = [
-        os.path.join(weights_dir, f"bounding_box_model_fold_{fold}", "weights", "best.pt"),
-        os.path.join("yolo_training", f"bounding_box_model_fold_{fold}", "weights", "best.pt"),
-        os.path.join(
-            "runs", "detect", "yolo_training",
-            f"bounding_box_model_fold_{fold}", "weights", "best.pt",
-        ),
+        os.path.join(weights_dir, run),
+        os.path.join("yolo_training", run),
+        os.path.join("runs", "detect", "yolo_training", run),
+        os.path.join("runs", "detect", weights_dir, run),
     ]
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
+    for base in candidates:
+        found = _as_best_pt(base)
+        if found:
+            return found
     raise FileNotFoundError(
-        f"No best.pt for fold {fold}. Looked in:\n  " + "\n  ".join(candidates)
+        f"No best.pt for run '{run}'. Looked in:\n  " + "\n  ".join(candidates)
     )
+
+
+def _resolve_weights(weights_dir: str, fold: int) -> str:
+    return _resolve_run(weights_dir, f"bounding_box_model_fold_{fold}")
 
 
 def evaluate_fold(weights: str, data_yaml: str, split: str, imgsz: int) -> Dict[str, float]:
@@ -67,7 +89,18 @@ def main() -> None:
     parser.add_argument(
         "--weights_dir",
         default="runs/detect/yolo_training",
-        help="Directory containing bounding_box_model_fold_N/",
+        help="Parent directory of the five run folders",
+    )
+    parser.add_argument(
+        "--runs",
+        nargs=5,
+        metavar="RUN",
+        default=None,
+        help=(
+            "Five run folders or best.pt paths in fold order 1–5 "
+            "(e.g. bounding_box_model_fold_1_noaug_20260908_1959 ...). "
+            "Default: bounding_box_model_fold_1 ... fold_5"
+        ),
     )
     parser.add_argument(
         "--data_dir",
@@ -79,17 +112,24 @@ def main() -> None:
     parser.add_argument("--imgsz", type=int, default=640, help="Eval image size")
     args = parser.parse_args()
 
+    if args.n_folds != 5 and args.runs is not None:
+        parser.error("--runs lists five folders; use n_folds=5")
+
+    run_names = args.runs or [f"bounding_box_model_fold_{i}" for i in range(1, args.n_folds + 1)]
+    n_folds = len(run_names)
+
     rows: List[Dict[str, float]] = []
     names = ["mAP50", "mAP50-95", "Precision", "Recall", "F1"]
 
-    print(f"Evaluating {args.n_folds} folds on split='{args.split}'\n")
-    for fold in range(1, args.n_folds + 1):
-        weights = _resolve_weights(args.weights_dir, fold)
+    print(f"Evaluating {n_folds} folds on split='{args.split}'\n")
+    for fold, run in enumerate(run_names, start=1):
+        weights = _resolve_run(args.weights_dir, run)
         data_yaml = os.path.join(args.data_dir, f"fold_{fold}", "data.yaml")
         if not os.path.isfile(data_yaml):
             raise FileNotFoundError(f"Missing {data_yaml}")
 
-        print(f"--- Fold {fold}/{args.n_folds} ---")
+        print(f"--- Fold {fold}/{n_folds} ---")
+        print(f"run:     {run}")
         print(f"weights: {weights}")
         print(f"data:    {data_yaml}")
         metrics = evaluate_fold(weights, data_yaml, args.split, args.imgsz)
@@ -100,7 +140,7 @@ def main() -> None:
         print()
 
     print("=" * 60)
-    print(f"{args.split} mean ± SD over {args.n_folds} folds")
+    print(f"{args.split} mean ± SD over {n_folds} folds")
     print("=" * 60)
     for name in names:
         values = np.array([row[name] for row in rows], dtype=float)
