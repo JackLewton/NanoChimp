@@ -404,6 +404,19 @@ def main():
                         help='Number of folds when using --kfold (default: 5)')
     parser.add_argument('--fold', type=int, default=None,
                         help='If --kfold, train only this fold (1-indexed)')
+    parser.add_argument(
+        '--yolo_dir',
+        type=str,
+        default='yolo_dataset',
+        help='YOLO dataset output directory (default: yolo_dataset). '
+             'Use a different path for ablations so existing folds are not overwritten.',
+    )
+    parser.add_argument(
+        '--run_suffix',
+        type=str,
+        default='',
+        help='Appended to k-fold run names, e.g. _preal → bounding_box_model_fold_1_preal',
+    )
     
     args = parser.parse_args()
     
@@ -419,7 +432,7 @@ def main():
     
     # Convert COCO format to YOLO format
     print(f"Converting COCO format to YOLO format...")
-    yolo_data_dir = 'yolo_dataset'
+    yolo_data_dir = args.yolo_dir
     convert_coco_to_yolo_format(
         annotation_file=args.annotation_file,
         image_dir=args.image_dir,
@@ -467,7 +480,7 @@ def main():
             )
             model, results = train_yolo_model(
                 data_yaml_path=config_path,
-                run_name=f'bounding_box_model_{fold_name}',
+                run_name=f'bounding_box_model_{fold_name}{args.run_suffix}',
                 exist_ok=True,
                 **train_kwargs,
             )
