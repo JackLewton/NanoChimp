@@ -306,7 +306,8 @@ def train_yolo_model(
         'save': True,
         'plots': True,
         'patience': patience,  # Early stopping patience (epochs with no improvement)
-        'save_period': 5  # Save checkpoint every 5 epochs
+        # -1: only weights/last.pt and weights/best.pt. Curves still go to results.csv.
+        'save_period': -1,
     }
     
     # Add augmentation parameters if specified

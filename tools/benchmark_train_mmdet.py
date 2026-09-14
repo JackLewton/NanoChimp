@@ -5,14 +5,15 @@ Fine-tune MMDetection models on the chimpanzee detection benchmark dataset.
 Trains Faster R-CNN R50-FPN and FCOS R50-FPN sequentially on the same
 prepared dataset split as train_yolo_benchmark.py for a fair comparison.
 
-Requires the nanochimp-MMDet2 conda environment:
+Requires the nanochimp-MMDet2 conda environment. Install torch with pip
+(the conda pytorch channel no longer ships 1.10.2 + CUDA 11.3):
 
     conda create -n nanochimp-MMDet2 python=3.9 -y
     conda activate nanochimp-MMDet2
-    conda install pytorch==1.10.2 torchvision==0.11.3 cudatoolkit=11.3 -c pytorch -y
+    pip install torch==1.10.2+cu113 torchvision==0.11.3+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
     pip install "numpy<2" "opencv-python<4.12"
     pip install "mmcv-full==1.6.0" -f https://download.openmmlab.com/mmcv/dist/cu113/torch1.10.0/index.html
-    pip install "mmdet==2.25.0" tqdm pyyaml pillow
+    pip install "mmdet==2.25.0" tqdm pyyaml pillow matplotlib
 
 Run prepare_benchmark_data.py (nanochimp env) before running this script.
 
@@ -204,10 +205,9 @@ lr_config = dict(
     warmup_ratio=0.001, step=[{step1}, {step2}])
 
 runner = dict(type='EpochBasedRunner', max_epochs={epochs})
-# save_best='auto' above (bbox_mAP is the primary CocoDataset metric) writes
-# best_bbox_mAP_epoch_<N>.pth. Cap regular per-epoch checkpoints so long runs
-# don't fill the disk; the "best" checkpoint is kept independently of this limit.
-checkpoint_config = dict(interval=max(1, {epochs} // 10), max_keep_ckpts=3)
+# save_best='auto' writes best_bbox_mAP_epoch_<N>.pth independently.
+# interval=max_epochs keeps a single regular checkpoint (the last epoch).
+checkpoint_config = dict(interval={epochs}, max_keep_ckpts=1)
 log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
 
 seed = 42

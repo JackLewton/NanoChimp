@@ -71,6 +71,7 @@ def train_model(
         save=True,
         plots=True,
         verbose=True,
+        save_period=-1,  # only last.pt and best.pt; results.csv still logs every epoch
     )
 
     try:
