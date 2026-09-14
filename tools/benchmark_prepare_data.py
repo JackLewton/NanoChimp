@@ -37,6 +37,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.split_dataset import create_train_val_split
+from tools.split_dataset_kfold import create_kfold_splits
 
 
 def convert_coco_to_yolo(annotation_file: str, image_dir: str, output_dir: str) -> int:
@@ -106,17 +107,19 @@ def create_coco_splits(
     train_txt: str,
     val_txt: str,
     output_dir: str,
-) -> tuple[str, str]:
-    """Filter a COCO JSON into train and val subsets matching the txt splits.
+    test_txt: str | None = None,
+) -> dict[str, str]:
+    """Filter a COCO JSON into subsets matching the txt splits.
 
     Args:
         annotation_file: Original full COCO JSON path.
         train_txt: Path to train.txt (one absolute image path per line).
         val_txt: Path to val.txt (one absolute image path per line).
-        output_dir: Directory to write train_split.json and val_split.json.
+        output_dir: Directory to write <split>_split.json files.
+        test_txt: Optional path to test.txt.
 
     Returns:
-        Paths to (train_split.json, val_split.json).
+        Mapping of split name to written JSON path.
     """
     with open(annotation_file) as f:
         data = json.load(f)
@@ -125,45 +128,45 @@ def create_coco_splits(
         with open(txt) as f:
             return {os.path.basename(line.strip()) for line in f if line.strip()}
 
-    train_files = _names(train_txt)
-    val_files = _names(val_txt)
+    split_files = {
+        "train": _names(train_txt),
+        "val": _names(val_txt),
+    }
+    if test_txt:
+        split_files["test"] = _names(test_txt)
 
     base = {
         "info": data.get("info", {}),
         "licenses": data.get("licenses", []),
         "categories": data["categories"],
     }
-    train_data: dict = {**base, "images": [], "annotations": []}
-    val_data: dict = {**base, "images": [], "annotations": []}
-
-    train_ids: set[int] = set()
-    val_ids: set[int] = set()
+    splits: dict[str, dict] = {
+        name: {**base, "images": [], "annotations": []} for name in split_files
+    }
+    id_to_split: dict[int, str] = {}
     for img in data["images"]:
         fname = os.path.basename(img["file_name"])
-        if fname in train_files:
-            train_data["images"].append(img)
-            train_ids.add(img["id"])
-        elif fname in val_files:
-            val_data["images"].append(img)
-            val_ids.add(img["id"])
+        for name, files in split_files.items():
+            if fname in files:
+                splits[name]["images"].append(img)
+                id_to_split[img["id"]] = name
+                break
 
     for ann in data["annotations"]:
-        if ann["image_id"] in train_ids:
-            train_data["annotations"].append(ann)
-        elif ann["image_id"] in val_ids:
-            val_data["annotations"].append(ann)
+        name = id_to_split.get(ann["image_id"])
+        if name:
+            splits[name]["annotations"].append(ann)
 
-    train_json = os.path.join(output_dir, "train_split.json")
-    val_json = os.path.join(output_dir, "val_split.json")
-    for path, split in ((train_json, train_data), (val_json, val_data)):
+    written: dict[str, str] = {}
+    for name, split in splits.items():
+        path = os.path.join(output_dir, f"{name}_split.json")
         with open(path, "w") as f:
             json.dump(split, f)
+        written[name] = path
 
-    print(
-        f"COCO splits written: {len(train_data['images'])} train / "
-        f"{len(val_data['images'])} val images"
-    )
-    return train_json, val_json
+    counts = " / ".join(f"{len(splits[n]['images'])} {n}" for n in splits)
+    print(f"COCO splits written: {counts} images")
+    return written
 
 
 def write_yolo_yaml(output_dir: str) -> str:
@@ -178,15 +181,39 @@ def write_yolo_yaml(output_dir: str) -> str:
     abs_dir = os.path.abspath(output_dir)
     config = {
         "path": abs_dir,
-        "train": os.path.join(abs_dir, "train.txt"),
-        "val": os.path.join(abs_dir, "val.txt"),
+        "train": "train.txt",
+        "val": "val.txt",
         "nc": 1,
         "names": {0: "chimp"},
     }
+    if os.path.isfile(os.path.join(abs_dir, "test.txt")):
+        config["test"] = "test.txt"
     yaml_path = os.path.join(abs_dir, "data.yaml")
     with open(yaml_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
     return yaml_path
+
+
+def write_fold_splits(annotation_file: str, output_dir: str, n_folds: int) -> list[str]:
+    """Write video-grouped k-fold YOLO lists, data.yaml, and COCO JSONs."""
+    fold_dirs = create_kfold_splits(
+        images_dir=os.path.join(output_dir, "images"),
+        n_splits=n_folds,
+        val_ratio=0.15,
+        seed=42,
+        output_dir=os.path.join(output_dir, "folds"),
+    )
+    for fold_dir in fold_dirs:
+        test_txt = os.path.join(fold_dir, "test.txt")
+        create_coco_splits(
+            annotation_file,
+            os.path.join(fold_dir, "train.txt"),
+            os.path.join(fold_dir, "val.txt"),
+            fold_dir,
+            test_txt=test_txt if os.path.isfile(test_txt) else None,
+        )
+        write_yolo_yaml(fold_dir)
+    return fold_dirs
 
 
 def main() -> None:
@@ -213,6 +240,14 @@ def main() -> None:
         "--output_dir", default="yolo_benchmark_dataset/",
         help="Root output directory for the prepared dataset.",
     )
+    parser.add_argument(
+        "--kfold", action="store_true",
+        help="Also write video-grouped k-fold splits under <output_dir>/folds/.",
+    )
+    parser.add_argument(
+        "--n_folds", type=int, default=5,
+        help="Number of folds when using --kfold (default: 5).",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -237,10 +272,16 @@ def main() -> None:
     # Step 4: write YOLO data.yaml for Ultralytics
     yaml_path = write_yolo_yaml(args.output_dir)
 
+    if args.kfold:
+        print(f"\nCreating video-grouped {args.n_folds}-fold splits...")
+        write_fold_splits(args.annotation_file, args.output_dir, args.n_folds)
+
     print("\nDataset preparation complete.")
     print(f"  YOLO config : {yaml_path}")
     print(f"  MMDet train : {os.path.join(args.output_dir, 'train_split.json')}")
     print(f"  MMDet val   : {os.path.join(args.output_dir, 'val_split.json')}")
+    if args.kfold:
+        print(f"  K-fold dir  : {os.path.join(args.output_dir, 'folds')}")
 
 
 if __name__ == "__main__":

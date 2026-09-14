@@ -18,7 +18,7 @@ Run prepare_benchmark_data.py (nanochimp env) before running this script.
 
 Usage:
     conda activate nanochimp-MMDet2
-    python tools/train_mmdet_benchmark.py --data_dir yolo_benchmark_dataset/
+    python tools/benchmark_train_mmdet.py --data_dir yolo_benchmark_dataset/ --kfold
 """
 
 from __future__ import annotations
@@ -50,7 +50,8 @@ _BASE_BATCH = 16
 # standard to put config in string, even if ugly
 
 def _faster_rcnn_head(data_root: str, train_json: str, val_json: str,
-                      imgsz: int, batch: int, epochs: int) -> str:
+                      imgsz: int, batch: int, epochs: int,
+                      test_json: str | None = None) -> str:
     return """
 # Faster R-CNN R50-FPN — fine-tuned on ChimpTZ-26
 model = dict(
@@ -112,11 +113,12 @@ model = dict(
             nms=dict(type='nms', iou_threshold=0.7), min_bbox_size=0),
         rcnn=dict(
             score_thr=0.05, nms=dict(type='nms', iou_threshold=0.5), max_per_img=100)))
-""" + _common_config(data_root, train_json, val_json, imgsz, batch, epochs)
+""" + _common_config(data_root, train_json, val_json, imgsz, batch, epochs, test_json)
 
 
 def _fcos_head(data_root: str, train_json: str, val_json: str,
-               imgsz: int, batch: int, epochs: int) -> str:
+               imgsz: int, batch: int, epochs: int,
+               test_json: str | None = None) -> str:
     return """
 # FCOS R50-FPN — fine-tuned on ChimpTZ-26
 model = dict(
@@ -140,16 +142,18 @@ model = dict(
     test_cfg=dict(
         nms_pre=1000, min_bbox_size=0, score_thr=0.05,
         nms=dict(type='nms', iou_threshold=0.5), max_per_img=100))
-""" + _common_config(data_root, train_json, val_json, imgsz, batch, epochs)
+""" + _common_config(data_root, train_json, val_json, imgsz, batch, epochs, test_json)
 
 
 def _common_config(data_root: str, train_json: str, val_json: str,
-                   imgsz: int, batch: int, epochs: int) -> str:
+                   imgsz: int, batch: int, epochs: int,
+                   test_json: str | None = None) -> str:
     """Shared dataset, optimiser, and runtime settings for both models."""
     lr     = _BASE_LR * batch / _BASE_BATCH
     step1  = int(epochs * 0.67)
     step2  = int(epochs * 0.89)
     images = os.path.join(data_root, "images")
+    eval_json = test_json or val_json
     return f"""
 dataset_type = 'CocoDataset'
 data_root = '{data_root}/'
@@ -188,7 +192,7 @@ data = dict(
         ann_file='{val_json}', img_prefix='{images}/',
         classes=('chimp',), pipeline=test_pipeline),
     test=dict(type=dataset_type,
-        ann_file='{val_json}', img_prefix='{images}/',
+        ann_file='{eval_json}', img_prefix='{images}/',
         classes=('chimp',), pipeline=test_pipeline))
 
 evaluation = dict(interval=1, metric='bbox', save_best='auto')
@@ -225,6 +229,7 @@ def build_config(
     batch: int,
     epochs: int,
     config_dir: str,
+    test_json: str | None = None,
 ) -> str:
     """Generate and write an MMDetection config file, returning its path.
 
@@ -237,14 +242,19 @@ def build_config(
         batch: Samples per GPU.
         epochs: Total training epochs.
         config_dir: Directory to write the config file.
+        test_json: Optional absolute path to test_split.json.
 
     Returns:
         Path to the written config file.
     """
     if "FasterRCNN" in model_name:
-        content = _faster_rcnn_head(data_root, train_json, val_json, imgsz, batch, epochs)
+        content = _faster_rcnn_head(
+            data_root, train_json, val_json, imgsz, batch, epochs, test_json
+        )
     elif "FCOS" in model_name:
-        content = _fcos_head(data_root, train_json, val_json, imgsz, batch, epochs)
+        content = _fcos_head(
+            data_root, train_json, val_json, imgsz, batch, epochs, test_json
+        )
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -349,22 +359,86 @@ def _measure_inference_ms(
     return sum(times) / len(times) if times else 0.0
 
 
-def train_model(model_name: str, data_dir: str, args: argparse.Namespace) -> dict | None:
-    """Fine-tune a single MMDetection model and return a summary dictionary.
+def _eval_test(cfg, checkpoint: str, device: str) -> dict:
+    """Run COCO bbox eval of a checkpoint on cfg.data.test."""
+    from mmcv.parallel import MMDataParallel
+    from mmcv.runner import load_checkpoint
+    from mmdet.apis import single_gpu_test
 
-    Args:
-        model_name: One of MODELS.
-        data_dir: Directory produced by prepare_benchmark_data.py.
-        args: Parsed CLI arguments.
+    cfg.data.test.test_mode = True
+    dataset = build_dataset(cfg.data.test)
+    loader = build_dataloader(
+        dataset, samples_per_gpu=1, workers_per_gpu=0, dist=False, shuffle=False,
+    )
+    model = build_detector(cfg.model, test_cfg=cfg.get("test_cfg"))
+    load_checkpoint(model, checkpoint, map_location="cpu")
+    model.CLASSES = dataset.CLASSES
+    model = MMDataParallel(model, device_ids=[0] if device == "cuda" else [])
+    outputs = single_gpu_test(model, loader, show=False)
+    return dataset.evaluate(outputs, metric="bbox")
 
-    Returns:
-        Summary dict with checkpoint path, or None on failure.
-    """
-    print(f"\n{'='*60}\nTraining {model_name}\n{'='*60}")
 
-    data_root  = os.path.abspath(data_dir)
-    train_json = os.path.join(data_root, "train_split.json")
-    val_json   = os.path.join(data_root, "val_split.json")
+def _fold_jobs(
+    data_dir: str, kfold: bool, n_folds: int, fold: int | None
+) -> list[tuple[int | None, str]]:
+    """Return (fold_number, split_dir) pairs. split_dir holds the COCO JSONs."""
+    if not kfold:
+        return [(None, data_dir)]
+    folds = [fold] if fold is not None else list(range(1, n_folds + 1))
+    jobs = []
+    for f in folds:
+        split_dir = os.path.join(data_dir, "folds", f"fold_{f}")
+        for required in ("train_split.json", "val_split.json"):
+            path = os.path.join(split_dir, required)
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"{path} not found. Re-run benchmark_prepare_data.py with --kfold."
+                )
+        jobs.append((f, split_dir))
+    return jobs
+
+
+def _print_mean_sd(summaries: list[dict]) -> None:
+    names = sorted({r["model"] for r in summaries if r.get("fold") is not None})
+    if not names:
+        return
+    print("\nMean ± SD across folds")
+    print(f"{'Model':<20} {'mAP50':<18} {'mAP50-95'}")
+    print("-" * 58)
+    for name in names:
+        rows = [r for r in summaries if r["model"] == name]
+        m50 = [r["mAP50"] for r in rows]
+        m95 = [r["mAP50_95"] for r in rows]
+        n = len(rows)
+        sd50 = (sum((x - sum(m50) / n) ** 2 for x in m50) / (n - 1)) ** 0.5 if n > 1 else 0.0
+        sd95 = (sum((x - sum(m95) / n) ** 2 for x in m95) / (n - 1)) ** 0.5 if n > 1 else 0.0
+        print(
+            f"{name:<20} {sum(m50)/n:.4f} ± {sd50:.4f}   "
+            f"{sum(m95)/n:.4f} ± {sd95:.4f}"
+        )
+
+
+def train_model(
+    model_name: str,
+    data_root: str,
+    split_dir: str,
+    args: argparse.Namespace,
+    fold: int | None = None,
+) -> dict | None:
+    """Fine-tune a single MMDetection model and return a summary dictionary."""
+    run_name = f"{model_name}_fold_{fold}" if fold is not None else model_name
+    print(f"\n{'='*60}\nTraining {run_name}\n{'='*60}")
+
+    data_root  = os.path.abspath(data_root)
+    split_dir  = os.path.abspath(split_dir)
+    train_json = os.path.join(split_dir, "train_split.json")
+    val_json   = os.path.join(split_dir, "val_split.json")
+    test_json  = os.path.join(split_dir, "test_split.json")
+    if not os.path.isfile(test_json):
+        test_json = None
+
+    work_dir = os.path.join(args.output_dir, run_name)
+    os.makedirs(work_dir, exist_ok=True)
 
     config_path = build_config(
         model_name=model_name,
@@ -374,14 +448,13 @@ def train_model(model_name: str, data_dir: str, args: argparse.Namespace) -> dic
         imgsz=args.imgsz,
         batch=args.batch_size,
         epochs=args.epochs,
-        config_dir=data_root,
+        config_dir=work_dir,
+        test_json=test_json,
     )
 
     cfg          = MMCVConfig.fromfile(config_path)
-    work_dir     = os.path.join(args.output_dir, model_name)
     cfg.work_dir = work_dir
     cfg.seed     = 42
-    os.makedirs(work_dir, exist_ok=True)
 
     cfg.gpu_ids = [0]
     cfg.device  = "cuda" if torch.cuda.is_available() else "cpu"
@@ -412,17 +485,31 @@ def train_model(model_name: str, data_dir: str, args: argparse.Namespace) -> dic
     else:
         print("Warning: no checkpoint found.")
 
+    split = "val"
     best_metrics = _parse_best_val_metrics(work_dir)
     map50    = best_metrics.get("bbox_mAP_50", 0.0)
     map50_95 = best_metrics.get("bbox_mAP", 0.0)
     if not best_metrics:
         print(f"Warning: could not parse validation mAP from logs in {work_dir}.")
 
+    if test_json and best_ckpt:
+        print("Evaluating best checkpoint on test split...")
+        try:
+            test_metrics = _eval_test(cfg, best_ckpt, cfg.device)
+            map50    = test_metrics.get("bbox_mAP_50", map50)
+            map50_95 = test_metrics.get("bbox_mAP", map50_95)
+            split = "test"
+        except Exception as e:
+            print(f"Warning: test eval failed: {e}")
+            traceback.print_exc()
+
     print("Measuring inference speed...")
     infer_ms = _measure_inference_ms(model, cfg, device=cfg.device)
 
     return {
         "model":        model_name,
+        "fold":         fold,
+        "split":        split,
         "framework":    "MMDetection",
         "params_M":     round(params / 1e6, 2),
         "mAP50":        round(float(map50), 4),
@@ -438,15 +525,14 @@ def main() -> None:
         description="Fine-tune MMDetection models on the chimpanzee benchmark dataset.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Run prepare_benchmark_data.py (nanochimp env) first, then:\n\n"
+            "Run benchmark_prepare_data.py (nanochimp env) first, then:\n\n"
             "  conda activate nanochimp-MMDet2\n"
-            "  python tools/train_mmdet_benchmark.py \\\n"
-            "      --data_dir yolo_benchmark_dataset/ --epochs 200"
+            "  python tools/benchmark_train_mmdet.py --data_dir yolo_benchmark_dataset/ --kfold"
         ),
     )
     parser.add_argument(
         "--data_dir", default="yolo_benchmark_dataset/",
-        help="Directory produced by prepare_benchmark_data.py.",
+        help="Directory produced by benchmark_prepare_data.py.",
     )
     parser.add_argument("--epochs",     type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -455,36 +541,55 @@ def main() -> None:
         "--output_dir", default="benchmark_results/",
         help="Root directory for training outputs.",
     )
+    parser.add_argument(
+        "--kfold", action="store_true",
+        help="Train on video-grouped folds under <data_dir>/folds/.",
+    )
+    parser.add_argument("--n_folds", type=int, default=5, help="Folds to run with --kfold.")
+    parser.add_argument(
+        "--fold", type=int, default=None,
+        help="If --kfold, train only this fold (1-indexed).",
+    )
     args = parser.parse_args()
+    if args.fold is not None and not args.kfold:
+        parser.error("--fold requires --kfold")
 
-    for required in ("train_split.json", "val_split.json"):
-        path = os.path.join(args.data_dir, required)
-        if not os.path.isfile(path):
-            raise FileNotFoundError(
-                f"{path} not found. Run prepare_benchmark_data.py first."
-            )
+    jobs = _fold_jobs(args.data_dir, args.kfold, args.n_folds, args.fold)
+    if not args.kfold:
+        for required in ("train_split.json", "val_split.json"):
+            path = os.path.join(args.data_dir, required)
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"{path} not found. Run benchmark_prepare_data.py first."
+                )
 
     summaries = []
     for name in MODELS:
-        try:
-            result = train_model(name, args.data_dir, args)
-            if result:
-                summaries.append(result)
-        except Exception as e:
-            print(f"Training failed for {name}: {e}")
-            traceback.print_exc()
+        for fold, split_dir in jobs:
+            try:
+                result = train_model(name, args.data_dir, split_dir, args, fold=fold)
+                if result:
+                    summaries.append(result)
+            except Exception as e:
+                print(f"Training failed for {name}: {e}")
+                traceback.print_exc()
 
-    print(f"\n{'='*80}")
+    print(f"\n{'='*90}")
     print("MMDETECTION BENCHMARK RESULTS")
-    print(f"{'='*80}")
-    print(f"{'Model':<20} {'Params (M)':<12} {'mAP50':<10} {'mAP50-95':<12} {'Speed (ms)'}")
-    print("-" * 80)
+    print(f"{'='*90}")
+    print(
+        f"{'Model':<20} {'Fold':<6} {'Split':<6} {'Params (M)':<12} "
+        f"{'mAP50':<10} {'mAP50-95':<12} {'Speed (ms)'}"
+    )
+    print("-" * 90)
     for r in summaries:
+        fold = r["fold"] if r.get("fold") is not None else "-"
         print(
-            f"{r['model']:<20} {r['params_M']:<12.2f} "
+            f"{r['model']:<20} {fold:<6} {r.get('split', 'val'):<6} {r['params_M']:<12.2f} "
             f"{r['mAP50']:<10.4f} {r['mAP50_95']:<12.4f} {r['inference_ms']:.2f}"
         )
-    print(f"{'='*80}")
+    print(f"{'='*90}")
+    _print_mean_sd(summaries)
 
     os.makedirs(args.output_dir, exist_ok=True)
     results_path = os.path.join(args.output_dir, "mmdet_benchmark_summary.json")
