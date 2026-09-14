@@ -9,7 +9,7 @@ re-evaluates each fold's best checkpoint on the held-out test split.
 Table values are mean ± 95% CI (Student's t) across folds.
 
 Usage (nanochimp env; MMDet rows need nanochimp-MMDet2):
-    python tools/benchmark_eval.py --kfold
+    python tools/benchmark_eval.py
     python tools/benchmark_eval.py --runs_dir benchmark_results --data_dir yolo_benchmark_dataset
 """
 
@@ -98,13 +98,15 @@ def discover_runs(runs_dir: str) -> dict[str, dict[int | None, str]]:
         raise FileNotFoundError(f"{runs_dir} not found")
 
     for name in sorted(os.listdir(runs_dir)):
+        if name.startswith("_") or name.startswith("."):
+            continue
         path = os.path.join(runs_dir, name)
         if not os.path.isdir(path):
             continue
         match = fold_re.match(name)
         if match:
             found[match.group("model")][int(match.group("fold"))] = path
-        elif name in DISPLAY_NAMES or name.startswith("YOLO"):
+        elif name in DISPLAY_NAMES:
             found[name][None] = path
     return dict(found)
 
@@ -274,7 +276,16 @@ def eval_yolo(run_dir: str, data_yaml: str, imgsz: int, split: str) -> dict | No
 
     model = YOLO(weights)
     params = sum(p.numel() for p in model.model.parameters()) / 1e6
-    metrics = model.val(data=data_yaml, split=split, imgsz=imgsz, plots=False, verbose=False)
+    metrics = model.val(
+        data=data_yaml,
+        split=split,
+        imgsz=imgsz,
+        plots=False,
+        verbose=False,
+        project=os.path.abspath(os.path.dirname(run_dir)),
+        name="_eval",
+        exist_ok=True,
+    )
     d = metrics.results_dict
     precision = float(d.get("metrics/precision(B)", 0.0))
     recall = float(d.get("metrics/recall(B)", 0.0))

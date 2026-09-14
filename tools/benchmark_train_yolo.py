@@ -65,7 +65,7 @@ def train_model(
         batch=args.batch_size,
         patience=args.patience,
         device=0 if torch.cuda.is_available() else "cpu",
-        project=args.output_dir,
+        project=os.path.abspath(args.output_dir),
         name=run_name,
         exist_ok=True,
         save=True,
@@ -165,12 +165,12 @@ def main() -> None:
         "--data_dir", default="yolo_benchmark_dataset/",
         help="Directory produced by benchmark_prepare_data.py.",
     )
-    parser.add_argument("--epochs",     type=int, default=200)
+    parser.add_argument("--epochs",     type=int, default=400)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--imgsz",      type=int, default=640)
     parser.add_argument(
-        "--patience", type=int, default=50,
-        help="Early-stopping patience in epochs. Set to 0 to disable.",
+        "--patience", type=int, default=0,
+        help="Early-stopping patience in epochs. 0 disables it (train all epochs).",
     )
     parser.add_argument(
         "--output_dir", default="benchmark_results/",

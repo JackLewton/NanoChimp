@@ -534,9 +534,13 @@ def main() -> None:
         "--data_dir", default="yolo_benchmark_dataset/",
         help="Directory produced by benchmark_prepare_data.py.",
     )
-    parser.add_argument("--epochs",     type=int, default=200)
+    parser.add_argument("--epochs",     type=int, default=400)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--imgsz",      type=int, default=640)
+    parser.add_argument(
+        "--patience", type=int, default=0,
+        help="Unused: MMDetection always trains for --epochs (no early stopping).",
+    )
     parser.add_argument(
         "--output_dir", default="benchmark_results/",
         help="Root directory for training outputs.",
