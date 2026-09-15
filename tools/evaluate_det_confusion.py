@@ -95,6 +95,7 @@ def main() -> None:
     parser.add_argument("--data", default=None, help="data.yaml for --weights")
     parser.add_argument("--fold", type=int, default=None, help="Run one fold only (1-indexed)")
     parser.add_argument("--n_folds", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=42, help="Training seed in the run folder name")
     parser.add_argument("--weights_dir", default="runs/detect/yolo_training")
     parser.add_argument("--data_dir", default="yolo_dataset/folds")
     parser.add_argument("--split", default="test")
@@ -117,7 +118,7 @@ def main() -> None:
             data_yaml = os.path.join(args.data_dir, f"fold_{fold}", "data.yaml")
             if not os.path.isfile(data_yaml):
                 raise FileNotFoundError(data_yaml)
-            jobs.append((f"fold_{fold}", _resolve_weights(args.weights_dir, fold), data_yaml))
+            jobs.append((f"fold_{fold}", _resolve_weights(args.weights_dir, fold, seed=args.seed), data_yaml))
 
     print(f"split={args.split}  conf={args.conf}  iou={args.iou}\n")
     summed: Optional[np.ndarray] = None

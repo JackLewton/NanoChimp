@@ -73,8 +73,8 @@ def _resolve_run(weights_dir: str, run: str, checkpoint: str = "best") -> str:
     )
 
 
-def _resolve_weights(weights_dir: str, fold: int, checkpoint: str = "best") -> str:
-    return _resolve_run(weights_dir, f"bounding_box_model_fold_{fold}", checkpoint)
+def _resolve_weights(weights_dir: str, fold: int, checkpoint: str = "best", seed: int = 42) -> str:
+    return _resolve_run(weights_dir, f"bounding_box_model_fold_{fold}_seed{seed}", checkpoint)
 
 
 def evaluate_fold(weights: str, data_yaml: str, split: str, imgsz: int) -> Dict[str, float]:
@@ -100,7 +100,7 @@ def main() -> None:
         help=(
             "Five run folders or best.pt paths in fold order 1–5 "
             "(e.g. bounding_box_model_fold_1_noaug_20260908_1959 ...). "
-            "Default: bounding_box_model_fold_1 ... fold_5"
+            "Default: bounding_box_model_fold_1_seed42 ... fold_5_seed42"
         ),
     )
     parser.add_argument(
@@ -109,6 +109,7 @@ def main() -> None:
         help="Directory containing fold_N/data.yaml",
     )
     parser.add_argument("--n_folds", type=int, default=5, help="Number of folds")
+    parser.add_argument("--seed", type=int, default=42, help="Training seed in the run folder name")
     parser.add_argument("--split", default="test", help="Ultralytics split to evaluate")
     parser.add_argument("--imgsz", type=int, default=640, help="Eval image size")
     parser.add_argument(
@@ -122,7 +123,9 @@ def main() -> None:
     if args.n_folds != 5 and args.runs is not None:
         parser.error("--runs lists five folders; use n_folds=5")
 
-    run_names = args.runs or [f"bounding_box_model_fold_{i}" for i in range(1, args.n_folds + 1)]
+    run_names = args.runs or [
+        f"bounding_box_model_fold_{i}_seed{args.seed}" for i in range(1, args.n_folds + 1)
+    ]
     n_folds = len(run_names)
 
     rows: List[Dict[str, float]] = []

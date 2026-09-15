@@ -202,6 +202,7 @@ def train_yolo_model(
     patience: int = 10,
     run_name='bounding_box_model',
     exist_ok=False,
+    seed: int = 0,
 ):
     """
     Train YOLO model using ultralytics
@@ -217,6 +218,7 @@ def train_yolo_model(
         patience: Early stopping patience
         run_name: Ultralytics run directory name under yolo_training/
         exist_ok: Overwrite an existing run directory with the same name
+        seed: Ultralytics training seed
     """
     model_source = resume_from if resume_from else model_name
 
@@ -308,6 +310,7 @@ def train_yolo_model(
         'patience': patience,  # Early stopping patience (epochs with no improvement)
         # -1: only weights/last.pt and weights/best.pt. Curves still go to results.csv.
         'save_period': -1,
+        'seed': seed,
     }
     
     # Add augmentation parameters if specified
@@ -416,7 +419,13 @@ def main():
         '--run_suffix',
         type=str,
         default='',
-        help='Appended to k-fold run names, e.g. _preal → bounding_box_model_fold_1_preal',
+        help='Appended after the seed in k-fold run names, e.g. _preal → bounding_box_model_fold_1_seed42_preal',
+    )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Training seed (Ultralytics). Also used in the run name: bounding_box_model_fold_1_seed42. Split seed stays 42.',
     )
     
     args = parser.parse_args()
@@ -452,6 +461,7 @@ def main():
         resume_from=args.resume_from,
         aug_level=args.aug_level,
         patience=args.patience,
+        seed=args.seed,
     )
 
     if args.kfold:
@@ -481,7 +491,7 @@ def main():
             )
             model, results = train_yolo_model(
                 data_yaml_path=config_path,
-                run_name=f'bounding_box_model_{fold_name}{args.run_suffix}',
+                run_name=f'bounding_box_model_{fold_name}_seed{args.seed}{args.run_suffix}',
                 exist_ok=True,
                 **train_kwargs,
             )
