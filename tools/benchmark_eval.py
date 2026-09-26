@@ -269,10 +269,13 @@ def _mmdet_best(run_dir: str) -> str | None:
 
 
 def eval_yolo(run_dir: str, data_yaml: str, imgsz: int, split: str) -> dict | None:
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        return None
     weights = _yolo_best(run_dir)
     if not weights or not os.path.isfile(data_yaml):
         return None
-    from ultralytics import YOLO
 
     model = YOLO(weights)
     params = sum(p.numel() for p in model.model.parameters()) / 1e6
@@ -412,9 +415,18 @@ def evaluate_models(
     import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        import ultralytics  # noqa: F401
+        has_yolo = True
+    except ImportError:
+        has_yolo = False
+        print("Ultralytics not installed in this env; skipping YOLO rows.")
+
     rows = []
     for model, folds in models.items():
         is_yolo = model.startswith("YOLO")
+        if is_yolo and not has_yolo:
+            continue
         for fold, run_dir in sorted(folds.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
             print(f"Evaluating {model} fold={fold if fold is not None else '-'} ...")
             if is_yolo:
