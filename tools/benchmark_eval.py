@@ -217,7 +217,6 @@ def plot_curves(
             ax.set_ylabel(ylabel)
             ax.grid(True, linestyle="--", alpha=0.45)
             ax.set_xlim(left=1)
-            ax.set_ylim(bottom=0)
         plotted += 1
 
     if plotted == 0:
@@ -225,6 +224,13 @@ def plot_curves(
         print("No training curves found.")
         return
 
+    # Set limits after every series is drawn. Calling set_ylim inside the loop
+    # turns autoscaling off, so later (higher) YOLO curves were clipped.
+    for ax in axes:
+        ax.relim()
+        ax.autoscale(enable=True, axis="y")
+        ymax = max(line.get_ydata().max() for line in ax.get_lines() if len(line.get_ydata()))
+        ax.set_ylim(0, max(1.0, float(ymax)) * 1.05)
     axes[0].legend(frameon=False, loc="lower right")
     fig.tight_layout()
     for ext in ("png", "pdf"):
