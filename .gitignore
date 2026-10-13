@@ -24,3 +24,5 @@ tmp/
 *ipynb
 yolo_benchmark_dataset/
 yolo_dataset_orig_split_dataset_py/
+figures/
+tools_extra/
