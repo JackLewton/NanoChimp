@@ -711,32 +711,32 @@ def main():
             video_path = os.path.join(args.input_dir, video_file)
             process_video(model, video_path, args, feature_extractor, reid_gallery, color_generator)
 
-        # Process all found images
-        if image_files:
-            image_files.sort()
-            print(f"Found {len(image_files)} image(s) in '{args.input_dir}'.")
-            if len(image_files) == 1:
-                # Single image: run one-off inference and save visualization
-                img_name = image_files[0]
-                img_path = os.path.join(args.input_dir, img_name)
-                print(f"Running inference on single image: {img_name}")
-                predictions, original_image = predict_bbox_yolo(model, img_path, args.conf_threshold, args.nms_iou_threshold, args.imgsz)
-                os.makedirs(args.output_dir, exist_ok=True)
-                output_path = os.path.join(args.output_dir, f"output_{img_name}")
-                visualize_prediction_yolo(img_path, predictions, original_image, output_path)
-                if predictions:
-                    print(f"Found {len(predictions)} objects. Result saved to {output_path}")
-                else:
-                    print(f"No objects detected. Result saved to {output_path}")
+    # Process all found images
+    if image_files:
+        image_files.sort()
+        print(f"Found {len(image_files)} image(s) in '{args.input_dir}'.")
+        if len(image_files) == 1:
+            # Single image: run one-off inference and save visualization
+            img_name = image_files[0]
+            img_path = os.path.join(args.input_dir, img_name)
+            print(f"Running inference on single image: {img_name}")
+            predictions, original_image = predict_bbox_yolo(model, img_path, args.conf_threshold, args.nms_iou_threshold, args.imgsz)
+            os.makedirs(args.output_dir, exist_ok=True)
+            output_path = os.path.join(args.output_dir, f"output_{img_name}")
+            visualize_prediction_yolo(img_path, predictions, original_image, output_path)
+            if predictions:
+                print(f"Found {len(predictions)} objects. Result saved to {output_path}")
             else:
-                # Multiple images: run batch inference
-                print(f"Running batch inference on images in {args.input_dir}...")
-                batch_inference(model, args.input_dir, args.output_dir, args.conf_threshold, args.nms_iou_threshold, args.imgsz)
-                print(f"Image inference completed! Results saved to {args.output_dir}")
+                print(f"No objects detected. Result saved to {output_path}")
+        else:
+            # Multiple images: run batch inference
+            print(f"Running batch inference on images in {args.input_dir}...")
+            batch_inference(model, args.input_dir, args.output_dir, args.conf_threshold, args.nms_iou_threshold, args.imgsz)
+            print(f"Image inference completed! Results saved to {args.output_dir}")
 
-        if not video_files and not image_files:
-            print(f"No images or videos found in {args.input_dir}. Please add files and retry.")
-    
+    if not video_files and not image_files:
+        print(f"No images or videos found in {args.input_dir}. Please add files and retry.")
+
     print(f"Inference completed!")
 
 
