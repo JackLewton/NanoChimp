@@ -1,5 +1,6 @@
 """
-The below script can be used to create the cropped ID images required to train the Re-ID model using your trained detection model.
+The below script can be used to create the cropped ID images 
+required to train the Re-ID model using your trained detection model.
 """
 
 import os
